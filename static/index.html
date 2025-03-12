@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GitHub Agent</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f6f8fa;
+            color: #24292e;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        header {
+            background-color: #24292e;
+            color: white;
+            padding: 20px 0;
+            text-align: center;
+        }
+        h1 {
+            margin: 0;
+            font-size: 24px;
+        }
+        .chat-container {
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24);
+            margin-top: 20px;
+            height: 70vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            border-bottom: 1px solid #e1e4e8;
+        }
+        .message {
+            margin-bottom: 15px;
+            padding: 10px 15px;
+            border-radius: 5px;
+            max-width: 80%;
+        }
+        .user-message {
+            background-color: #0366d6;
+            color: white;
+            align-self: flex-end;
+            margin-left: auto;
+        }
+        .agent-message {
+            background-color: #f1f8ff;
+            color: #24292e;
+            align-self: flex-start;
+        }
+        .chat-input {
+            display: flex;
+            padding: 10px;
+        }
+        #message-input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #e1e4e8;
+            border-radius: 4px;
+            margin-right: 10px;
+            font-size: 16px;
+        }
+        button {
+            background-color: #2ea44f;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #22863a;
+        }
+        button:disabled {
+            background-color: #94d3a2;
+            cursor: not-allowed;
+        }
+        .tool-call {
+            background-color: #ffece6;
+            border-left: 4px solid #f97583;
+            padding: 8px 12px;
+            margin: 10px 0;
+            font-family: monospace;
+            white-space: pre-wrap;
+            font-size: 14px;
+        }
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(0,0,0,.1);
+            border-radius: 50%;
+            border-top-color: #2ea44f;
+            animation: spin 1s ease-in-out infinite;
+            margin-left: 10px;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .status {
+            font-size: 14px;
+            color: #586069;
+            margin-top: 10px;
+            text-align: center;
+        }
+        .token-input {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.24);
+        }
+        .token-input label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: bold;
+        }
+        .token-input input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #e1e4e8;
+            border-radius: 4px;
+            font-size: 16px;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>GitHub Agent</h1>
+        </div>
+    </header>
+    
+    <div class="container">
+        <div class="token-input">
+            <label for="github-token">GitHub Token (Optional)</label>
+            <input type="password" id="github-token" placeholder="Enter your GitHub API token">
+            <label for="groq-token">Groq API Key (Required)</label>
+            <input type="password" id="groq-token" placeholder="Enter your Groq API key">
+            <button id="save-tokens">Save Tokens</button>
+        </div>
+        
+        <div class="chat-container">
+            <div class="chat-messages" id="chat-messages">
+                <div class="message agent-message">
+                    Hello! I'm your GitHub assistant. How can I help you today? You can ask me about repositories, code, issues, or any GitHub-related questions.
+                </div>
+            </div>
+            <div class="chat-input">
+                <input type="text" id="message-input" placeholder="Ask something about GitHub repositories..." disabled>
+                <button id="send-button" disabled>Send</button>
+            </div>
+        </div>
+        
+        <div class="status" id="status"></div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const messagesContainer = document.getElementById('chat-messages');
+            const messageInput = document.getElementById('message-input');
+            const sendButton = document.getElementById('send-button');
+            const saveTokensButton = document.getElementById('save-tokens');
+            const githubTokenInput = document.getElementById('github-token');
+            const groqTokenInput = document.getElementById('groq-token');
+            const statusDiv = document.getElementById('status');
+            
+            let messageHistory = [];
+            let isProcessing = false;
+            
+            // Check for saved tokens
+            if (localStorage.getItem('githubToken')) {
+                githubTokenInput.value = localStorage.getItem('githubToken');
+            }
+            if (localStorage.getItem('groqToken')) {
+                groqTokenInput.value = localStorage.getItem('groqToken');
+                if (groqTokenInput.value) {
+                    enableChat();
+                }
+            }
+            
+            saveTokensButton.addEventListener('click', function() {
+                if (groqTokenInput.value.trim() === '') {
+                    statusDiv.textContent = 'Groq API key is required!';
+                    return;
+                }
+                
+                localStorage.setItem('githubToken', githubTokenInput.value);
+                localStorage.setItem('groqToken', groqTokenInput.value);
+                statusDiv.textContent = 'Tokens saved successfully!';
+                enableChat();
+            });
+            
+            function enableChat() {
+                messageInput.disabled = false;
+                sendButton.disabled = false;
+                statusDiv.textContent = 'Chat enabled! You can now ask questions about GitHub repositories.';
+            }
+            
+            function addMessage(text, isUser) {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${isUser ? 'user-message' : 'agent-message'}`;
+                messageDiv.textContent = text;
+                messagesContainer.appendChild(messageDiv);
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                
+                if (isUser) {
+                    // Add to message history
+                    messageHistory.push({
+                        role: 'user',
+                        content: text
+                    });
+                } else {
+                    // Add to message history
+                    messageHistory.push({
+                        role: 'assistant',
+                        content: text
+                    });
+                }
+            }
+            
+            function addToolCall(toolName, args) {
+                const toolCallDiv = document.createElement('div');
+                toolCallDiv.className = 'tool-call';
+                toolCallDiv.innerHTML = `<strong>Tool Call:</strong> ${toolName}<br><pre>${JSON.stringify(args, null, 2)}</pre>`;
+                messagesContainer.appendChild(toolCallDiv);
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            }
+            
+  
+
+            async function sendMessage(message) {
+    if (message.trim() === '' || isProcessing) return;
+    
+    isProcessing = true;
+    addMessage(message, true);
+    messageInput.value = '';
+    
+    const loadingIndicator = document.createElement('div');
+    loadingIndicator.className = 'loading';
+    sendButton.disabled = true;
+    sendButton.appendChild(loadingIndicator);
+    
+    try {
+        statusDiv.textContent = 'Sending request to server...';
+        
+        const response = await fetch('http://localhost:8000/api/chat', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                message: message,
+                github_token: localStorage.getItem('githubToken'),
+                groq_token: localStorage.getItem('groqToken'),
+                history: messageHistory
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Server error: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        // Display any tool calls if available
+        if (data.tool_calls && data.tool_calls.length > 0) {
+            data.tool_calls.forEach(toolCall => {
+                addToolCall(toolCall.name, toolCall.args);
+            });
+        }
+        
+        // Display the agent's response
+        addMessage(data.response, false);
+        statusDiv.textContent = '';
+    } catch (error) {
+        console.error('Error:', error);
+        statusDiv.textContent = `Error: ${error.message}`;
+        
+        // Add error message to chat
+        const errorDiv = document.createElement('div');
+        errorDiv.className = 'message agent-message';
+        errorDiv.textContent = 'Sorry, there was an error processing your request. Please try again.';
+        messagesContainer.appendChild(errorDiv);
+    } finally {
+        sendButton.removeChild(loadingIndicator);
+        sendButton.disabled = false;
+        isProcessing = false;
+    }
+}
+
+            // Event listeners
+            sendButton.addEventListener('click', () => {
+                sendMessage(messageInput.value);
+            });
+            
+            messageInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    sendMessage(messageInput.value);
+                }
+            });
+        });
+    </script>
+</body>
+</html>
